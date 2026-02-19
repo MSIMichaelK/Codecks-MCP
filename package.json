@@ -18,8 +18,12 @@
     "claude",
     "model-context-protocol"
   ],
-  "author": "Kaia Studios",
+  "author": "Mike Carr",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/microkorg/Codecks-MCP.git"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

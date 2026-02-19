@@ -2,6 +2,8 @@
 
 An MCP (Model Context Protocol) server that lets AI assistants interact with [Codecks](https://codecks.io) project management. Query cards, create tasks, update status, and manage your game dev workflow directly from Claude or other MCP-compatible AI tools.
 
+**Repository:** [github.com/microkorg/Codecks-MCP](https://github.com/microkorg/Codecks-MCP)
+
 ## Features
 
 - **List & Search Cards** - Query all cards or filter by deck/project/status, search by title/content
@@ -11,17 +13,23 @@ An MCP (Model Context Protocol) server that lets AI assistants interact with [Co
 - **Space Management** - List, create, rename, and delete spaces (deck containers)
 - **Flexible Project Filtering** - Set a default project or specify per-call for cross-project workflows
 
-## Installation
+## Prerequisites
 
-1. Place the `codecks-mcp` folder wherever you like
-2. Install dependencies:
-   ```bash
-   cd codecks-mcp
-   npm install
-   ```
-3. Copy `.env.example` to `.env` and fill in your credentials:
-   - **Mac/Linux:** `cp .env.example .env`
-   - **Windows:** `copy .env.example .env`
+- [Node.js](https://nodejs.org/) v18 or later
+- A [Codecks](https://codecks.io) account with an organization
+
+## Quick Start
+
+```bash
+git clone https://github.com/microkorg/Codecks-MCP.git
+cd Codecks-MCP
+```
+
+Then run the setup script for your platform:
+- **Windows:** `setup.bat`
+- **Mac/Linux:** `bash setup.sh`
+
+This installs dependencies and creates your `.env` config file. See [Configuration](#configuration) below for how to find your token and user ID.
 
 ## Configuration
 
