@@ -1,0 +1,30 @@
+{
+  "name": "codecks-mcp",
+  "version": "1.1.0",
+  "description": "MCP server for Codecks project management - query, create, and manage cards from AI assistants",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "codecks-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "mcp",
+    "codecks",
+    "project-management",
+    "ai",
+    "claude",
+    "model-context-protocol"
+  ],
+  "author": "Kaia Studios",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "dotenv": "^16.3.1"
+  }
+}
