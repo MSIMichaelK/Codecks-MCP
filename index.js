@@ -29,6 +29,19 @@ if (!CODECKS_TOKEN || !CODECKS_ACCOUNT) {
   process.exit(1);
 }
 
+// Role-based tokens for studio sim (Alex = Lead Dev, Susi = Art Director)
+const ROLE_TOKENS = {
+  alex: process.env.CODECKS_TOKEN_ALEX,
+  susi: process.env.CODECKS_TOKEN_SUSI,
+};
+
+function getTokenForRole(role) {
+  if (!role) return CODECKS_TOKEN;
+  const token = ROLE_TOKENS[role.toLowerCase()];
+  if (!token) throw new Error(`Unknown role "${role}". Available roles: alex (Lead Dev), susi (Art Director)`);
+  return token;
+}
+
 // Cache for project name -> ID resolution
 let projectCache = null;
 
@@ -94,7 +107,7 @@ function parseApiError(statusCode, body) {
   return new Error(`Codecks API error: ${statusCode} - ${body.slice(0, 200)}`);
 }
 
-async function queryCodecks(query) {
+async function queryCodecks(query, token = null) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({ query });
 
@@ -103,7 +116,7 @@ async function queryCodecks(query) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Cookie": `at=${CODECKS_TOKEN}`,
+        "Cookie": `at=${token || CODECKS_TOKEN}`,
         "X-Account": CODECKS_ACCOUNT,
         "Content-Length": Buffer.byteLength(data),
       },
@@ -131,7 +144,7 @@ async function queryCodecks(query) {
   });
 }
 
-async function dispatchCodecks(path, payload) {
+async function dispatchCodecks(path, payload, token = null) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(payload);
 
@@ -141,7 +154,7 @@ async function dispatchCodecks(path, payload) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Cookie": `at=${CODECKS_TOKEN}`,
+        "Cookie": `at=${token || CODECKS_TOKEN}`,
         "X-Account": CODECKS_ACCOUNT,
         "Content-Length": Buffer.byteLength(data),
       },
@@ -325,10 +338,12 @@ async function listDecks(projectName = null) {
     });
 }
 
-async function createCard(content, deckId) {
+async function createCard(content, deckId, role = null) {
   if (!CODECKS_USER_ID) {
     throw new Error("CODECKS_USER_ID is required in .env for create operations");
   }
+
+  const token = role ? getTokenForRole(role) : null;
 
   const payload = {
     sessionId: randomUUID(),
@@ -353,7 +368,7 @@ async function createCard(content, deckId) {
     subscribeCreator: false,
   };
 
-  const result = await dispatchCodecks("cards/create", payload);
+  const result = await dispatchCodecks("cards/create", payload, token);
   return result;
 }
 
@@ -398,7 +413,7 @@ async function createProject(name) {
   return result;
 }
 
-async function updateCard(cardId, content) {
+async function updateCard(cardId, content, role = null) {
   if (!CODECKS_USER_ID) {
     throw new Error("CODECKS_USER_ID is required in .env for update operations");
   }
@@ -409,6 +424,8 @@ async function updateCard(cardId, content) {
     throw new Error("content is required and must be a string");
   }
 
+  const token = role ? getTokenForRole(role) : null;
+
   const payload = {
     sessionId: randomUUID(),
     userId: CODECKS_USER_ID,
@@ -416,7 +433,7 @@ async function updateCard(cardId, content) {
     content,
   };
 
-  const result = await dispatchCodecks("cards/update", payload);
+  const result = await dispatchCodecks("cards/update", payload, token);
   return result;
 }
 
@@ -436,6 +453,86 @@ async function moveCard(cardId, deckId) {
 
   const result = await dispatchCodecks("cards/bulkUpdate", payload);
   return result;
+}
+
+async function assignCard(cardId, assigneeId) {
+  if (!cardId || typeof cardId !== "string") {
+    throw new Error("cardId is required and must be a string");
+  }
+
+  const payload = {
+    sessionId: randomUUID(),
+    id: cardId,
+    assigneeId: assigneeId || null,
+  };
+
+  const result = await dispatchCodecks("cards/update", payload);
+  return result;
+}
+
+async function createConversation(cardId, content, userId, role = null) {
+  if (!cardId || typeof cardId !== "string") {
+    throw new Error("cardId is required and must be a string");
+  }
+  if (!content || typeof content !== "string") {
+    throw new Error("content is required and must be a string");
+  }
+
+  const token = role ? getTokenForRole(role) : null;
+  // Use the role's user ID if available, otherwise fall back to the provided userId
+  const authorId = userId || CODECKS_USER_ID;
+
+  const payload = {
+    sessionId: randomUUID(),
+    cardId,
+    context: "comment",
+    content,
+    userId: authorId,
+  };
+
+  const result = await dispatchCodecks("resolvables/create", payload, token);
+  return result;
+}
+
+async function postComment(resolvableId, content, authorId, role = null) {
+  if (!resolvableId || typeof resolvableId !== "string") {
+    throw new Error("resolvableId is required and must be a string");
+  }
+  if (!content || typeof content !== "string") {
+    throw new Error("content is required and must be a string");
+  }
+
+  const token = role ? getTokenForRole(role) : null;
+  const author = authorId || CODECKS_USER_ID;
+
+  const payload = {
+    sessionId: randomUUID(),
+    resolvableId,
+    content,
+    authorId: author,
+  };
+
+  const result = await dispatchCodecks("resolvables/comment", payload, token);
+  return result;
+}
+
+async function listConversations(cardId) {
+  if (!cardId || typeof cardId !== "string") {
+    throw new Error("cardId is required and must be a string");
+  }
+
+  const query = {};
+  query[`card(${cardId})`] = [{ resolvables: [] }];
+
+  const result = await queryCodecks(query);
+  const cardData = result?.card?.[cardId];
+  const resolvableData = result?.resolvable || {};
+
+  const resolvableIds = cardData?.resolvables || [];
+  return resolvableIds.map((id) => ({
+    id,
+    cardId: resolvableData[id]?.cardId || cardId,
+  }));
 }
 
 async function setCardStatus(cardId, status) {
@@ -718,7 +815,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "codecks_create_card",
-        description: "Create a new card in a deck. Specify either deckId or deckName (with optional project for name resolution).",
+        description: "Create a new card in a deck. Specify either deckId or deckName (with optional project for name resolution). Use 'role' to post as a studio role: 'susi' (Art Director) or 'alex' (Lead Dev).",
         inputSchema: {
           type: "object",
           properties: {
@@ -737,6 +834,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             project: {
               type: "string",
               description: "Project name for deck name resolution. Uses default project if not specified.",
+            },
+            role: {
+              type: "string",
+              description: "Post as a studio role: 'susi' (Art Director) or 'alex' (Lead Dev). Omit to post as the default account.",
+              enum: ["susi", "alex"],
             },
           },
           required: ["content"],
@@ -780,7 +882,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "codecks_update_card",
-        description: "Update the content of an existing card.",
+        description: "Update the content of an existing card. Use 'role' to post as a studio role: 'susi' (Art Director) or 'alex' (Lead Dev).",
         inputSchema: {
           type: "object",
           properties: {
@@ -792,8 +894,91 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "The new card content",
             },
+            role: {
+              type: "string",
+              description: "Post as a studio role: 'susi' (Art Director) or 'alex' (Lead Dev). Omit to post as the default account.",
+              enum: ["susi", "alex"],
+            },
           },
           required: ["cardId", "content"],
+        },
+      },
+      {
+        name: "codecks_assign_card",
+        description: "Assign a card to a user, or unassign it. Known user IDs: Millie (d0lly_x) = '39d3b88c-1f87-11f1-aeb8-0bf9339a9b74', Kronky = 'b68dec5e-1ea0-11f1-8852-db5f6b54d16b', Susi (Art Director) = '2e636e72-25d9-11f1-aed4-efbcbf98d44b', Alex (Lead Dev) = 'd0a8a9aa-25d8-11f1-aed4-5b4eede51463'.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cardId: {
+              type: "string",
+              description: "The card ID to assign",
+            },
+            assigneeId: {
+              type: "string",
+              description: "The user ID to assign the card to. Pass null or omit to unassign.",
+            },
+          },
+          required: ["cardId"],
+        },
+      },
+      {
+        name: "codecks_create_conversation",
+        description: "Start a new conversation thread on a card. Use 'role' to post as a studio role. The first message becomes the thread opener.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cardId: {
+              type: "string",
+              description: "The card ID to start a conversation on",
+            },
+            content: {
+              type: "string",
+              description: "The first message / thread opener",
+            },
+            role: {
+              type: "string",
+              description: "Post as a studio role: 'susi' (Art Director) or 'alex' (Lead Dev). Omit to post as the default account.",
+              enum: ["susi", "alex"],
+            },
+          },
+          required: ["cardId", "content"],
+        },
+      },
+      {
+        name: "codecks_post_comment",
+        description: "Reply to an existing conversation thread. Use codecks_list_conversations to get the resolvableId first. Use 'role' to post as a studio role. NOTE: Comment content cannot be read via API — use browser to read replies.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            resolvableId: {
+              type: "string",
+              description: "The conversation thread ID (from codecks_list_conversations)",
+            },
+            content: {
+              type: "string",
+              description: "The comment/reply text",
+            },
+            role: {
+              type: "string",
+              description: "Post as a studio role: 'susi' (Art Director) or 'alex' (Lead Dev). Omit to post as the default account.",
+              enum: ["susi", "alex"],
+            },
+          },
+          required: ["resolvableId", "content"],
+        },
+      },
+      {
+        name: "codecks_list_conversations",
+        description: "List conversation thread IDs for a card. Returns IDs only — content cannot be read via API (use browser). Use these IDs with codecks_post_comment to reply to threads.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cardId: {
+              type: "string",
+              description: "The card ID to list conversations for",
+            },
+          },
+          required: ["cardId"],
         },
       },
       {
@@ -982,7 +1167,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           if (!deckId) throw new Error(`Deck "${args.deckName}" not found`);
         }
         if (!deckId) throw new Error("Either deckId or deckName must be provided");
-        result = await createCard(args.content, deckId);
+        result = await createCard(args.content, deckId, args?.role);
         break;
       }
       case "codecks_create_deck":
@@ -992,7 +1177,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await createProject(args.name);
         break;
       case "codecks_update_card":
-        result = await updateCard(args.cardId, args.content);
+        result = await updateCard(args.cardId, args.content, args?.role);
+        break;
+      case "codecks_assign_card":
+        result = await assignCard(args.cardId, args.assigneeId || null);
+        break;
+      case "codecks_create_conversation": {
+        // Determine the authorId based on role
+        const roleUserIds = {
+          susi: process.env.CODECKS_SUSI_ID || "2e636e72-25d9-11f1-aed4-efbcbf98d44b",
+          alex: process.env.CODECKS_ALEX_ID || "d0a8a9aa-25d8-11f1-aed4-5b4eede51463",
+        };
+        const userId = args.role ? roleUserIds[args.role.toLowerCase()] : CODECKS_USER_ID;
+        result = await createConversation(args.cardId, args.content, userId, args?.role);
+        break;
+      }
+      case "codecks_post_comment": {
+        const roleUserIds2 = {
+          susi: process.env.CODECKS_SUSI_ID || "2e636e72-25d9-11f1-aed4-efbcbf98d44b",
+          alex: process.env.CODECKS_ALEX_ID || "d0a8a9aa-25d8-11f1-aed4-5b4eede51463",
+        };
+        const authorId = args.role ? roleUserIds2[args.role.toLowerCase()] : CODECKS_USER_ID;
+        result = await postComment(args.resolvableId, args.content, authorId, args?.role);
+        break;
+      }
+      case "codecks_list_conversations":
+        result = await listConversations(args.cardId);
         break;
       case "codecks_move_card":
         result = await moveCard(args.cardId, args.deckId);
