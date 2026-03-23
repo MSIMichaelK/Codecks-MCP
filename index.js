@@ -89,12 +89,38 @@ async function listProjectsInternal() {
   }));
 }
 
+// Retry configuration for rate limiting
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY = 1000; // ms
+
+async function withRetry(fn, retries = MAX_RETRIES) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (error.statusCode === 429 && attempt < retries) {
+        const delay = RETRY_BASE_DELAY * Math.pow(2, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
 function parseApiError(statusCode, body) {
   if (statusCode === 401 || statusCode === 403) {
-    return new Error("Authentication failed. Your token may have expired - get a fresh token from your browser cookies.");
+    const err = new Error("Authentication failed. Your token may have expired - get a fresh token from your browser cookies.");
+    err.statusCode = statusCode;
+    return err;
   }
   if (statusCode === 429) {
-    return new Error("Rate limited by Codecks API. Please wait before retrying.");
+    const err = new Error("Rate limited by Codecks API. Retrying...");
+    err.statusCode = 429;
+    return err;
   }
 
   // Try to extract error message from response
@@ -107,7 +133,7 @@ function parseApiError(statusCode, body) {
   return new Error(`Codecks API error: ${statusCode} - ${body.slice(0, 200)}`);
 }
 
-async function queryCodecks(query, token = null) {
+async function queryCodecksRaw(query, token = null) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({ query });
 
@@ -144,7 +170,11 @@ async function queryCodecks(query, token = null) {
   });
 }
 
-async function dispatchCodecks(path, payload, token = null) {
+async function queryCodecks(query, token = null) {
+  return withRetry(() => queryCodecksRaw(query, token));
+}
+
+async function dispatchCodecksRaw(path, payload, token = null) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(payload);
 
@@ -180,6 +210,43 @@ async function dispatchCodecks(path, payload, token = null) {
     req.write(data);
     req.end();
   });
+}
+
+async function dispatchCodecks(path, payload, token = null) {
+  return withRetry(() => dispatchCodecksRaw(path, payload, token));
+}
+
+async function startJourney(cardId, role = null) {
+  if (!cardId || typeof cardId !== "string") {
+    throw new Error("cardId is required and must be a string");
+  }
+  if (!CODECKS_USER_ID) {
+    throw new Error("CODECKS_USER_ID is required in .env for journey operations");
+  }
+
+  const token = role ? getTokenForRole(role) : null;
+
+  const payload = {
+    cardId,
+    userId: CODECKS_USER_ID,
+  };
+
+  try {
+    const result = await dispatchCodecks("workflows/apply", payload, token);
+    return { success: true, cardId, result };
+  } catch (error) {
+    // Handle Codecks version gate — some accounts block this endpoint
+    if (error.message && error.message.toLowerCase().includes("old version")) {
+      return {
+        success: false,
+        cardId,
+        reason: "version_gate",
+        guidance: "Codecks rejected workflows/apply with an app-version gate. Trigger this action in the Codecks web app instead.",
+        error: error.message,
+      };
+    }
+    throw error;
+  }
 }
 
 async function listCards(deckName = null, projectName = null, statusFilter = null) {
@@ -1134,6 +1201,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["spaceId"],
         },
       },
+      {
+        name: "codecks_start_journey",
+        description: "Start/expand a journey (workflow) on a hero card. This triggers the art pipeline or other journey configured on the card's deck, creating child cards for each journey step. Use this when a hero card (e.g., Island 01) needs its journey steps activated. Note: some Codecks accounts may gate this endpoint — if it fails, trigger via the web app instead.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cardId: {
+              type: "string",
+              description: "The hero/parent card ID to expand into journey steps",
+            },
+            role: {
+              type: "string",
+              description: "Optional studio role: 'susi' (Art Director) or 'alex' (Lead Dev). Omit to use default account.",
+              enum: ["susi", "alex"],
+            },
+          },
+          required: ["cardId"],
+        },
+      },
     ],
   };
 });
@@ -1230,6 +1316,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "codecks_delete_space":
         result = await deleteSpace(args.spaceId, args?.project);
+        break;
+      case "codecks_start_journey":
+        result = await startJourney(args.cardId, args?.role);
         break;
       default:
         throw new Error(`Unknown tool: ${name}`);
