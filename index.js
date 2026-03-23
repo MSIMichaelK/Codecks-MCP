@@ -668,6 +668,20 @@ async function updateDeck(deckId, title) {
   return result;
 }
 
+async function deleteDeck(deckId) {
+  if (!deckId || typeof deckId !== "string") {
+    throw new Error("deckId is required and must be a string");
+  }
+
+  const payload = {
+    sessionId: randomUUID(),
+    id: deckId,
+  };
+
+  const result = await dispatchCodecks("decks/delete", payload);
+  return result;
+}
+
 async function listSpaces(projectName = null) {
   const targetProjectName = projectName || CODECKS_DEFAULT_PROJECT;
   if (!targetProjectName) {
@@ -1131,6 +1145,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "codecks_delete_deck",
+        description: "Delete a deck from a project. The deck must be empty (no cards) before deleting.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            deckId: {
+              type: "string",
+              description: "The deck ID to delete",
+            },
+          },
+          required: ["deckId"],
+        },
+      },
+      {
         name: "codecks_list_spaces",
         description: "List all spaces in a project. Spaces are containers for organizing decks.",
         inputSchema: {
@@ -1304,6 +1332,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "codecks_update_deck":
         result = await updateDeck(args.deckId, args.title);
+        break;
+      case "codecks_delete_deck":
+        result = await deleteDeck(args.deckId);
         break;
       case "codecks_list_spaces":
         result = await listSpaces(args?.project);
